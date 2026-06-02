@@ -7,6 +7,7 @@ import type {
   TimerMode,
 } from '../types'
 import type { OdsSnippet } from '../data/odsTexts'
+import { charToKeyId } from '../data/keyboardLayout'
 import {
   appendRandomText,
   buildInitialText,
@@ -17,7 +18,8 @@ import {
   calculateWpm,
   getTimerSeconds,
 } from '../utils/typingMetrics'
-import { loadProgress, updateProgressAfterSession } from '../utils/progressStorage'
+import { getBestWpm, saveSession } from '../storage/userStore'
+import { playSound } from '../utils/sounds'
 
 function countCorrect(chars: CharState[]): number {
   return chars.filter((c) => c.status === 'correct').length
@@ -30,11 +32,19 @@ function createInitialState(timerMode: TimerMode) {
     snippet,
     lastGoal: snippet.goal,
     countdown: getTimerSeconds(timerMode),
-    bestWpm: loadProgress().bestWpm[timerMode],
+    bestWpm: getBestWpm(timerMode),
   }
 }
 
-export function useTypingTest(timerMode: TimerMode) {
+interface UseTypingTestOptions {
+  soundsEnabled: boolean
+  onSessionSaved?: () => void
+}
+
+export function useTypingTest(
+  timerMode: TimerMode,
+  { soundsEnabled, onSessionSaved }: UseTypingTestOptions,
+) {
   const initial = createInitialState(timerMode)
 
   const [testState, setTestState] = useState<TestState>('idle')
@@ -47,6 +57,10 @@ export function useTypingTest(timerMode: TimerMode) {
   const [result, setResult] = useState<SessionResult | null>(null)
   const [isNewRecord, setIsNewRecord] = useState(false)
   const [bestWpm, setBestWpm] = useState(initial.bestWpm)
+  const [newBadges, setNewBadges] = useState<string[]>([])
+  const [sessionKeyErrors, setSessionKeyErrors] = useState<Record<string, number>>(
+    {},
+  )
 
   const startTimeRef = useRef<number | null>(null)
   const lastGoalRef = useRef(initial.lastGoal)
@@ -55,13 +69,24 @@ export function useTypingTest(timerMode: TimerMode) {
   const cursorRef = useRef(cursorIndex)
   const testStateRef = useRef(testState)
   const errorsRef = useRef(errors)
+  const sessionKeyErrorsRef = useRef<Record<string, number>>({})
+  const soundsEnabledRef = useRef(soundsEnabled)
 
   useEffect(() => {
     charsRef.current = chars
     cursorRef.current = cursorIndex
     testStateRef.current = testState
     errorsRef.current = errors
-  }, [chars, cursorIndex, testState, errors])
+    soundsEnabledRef.current = soundsEnabled
+  }, [chars, cursorIndex, testState, errors, soundsEnabled])
+
+  const recordKeyError = useCallback((char: string, physicalKey: string) => {
+    const keyId = charToKeyId(char, physicalKey)
+    const current = sessionKeyErrorsRef.current
+    current[keyId] = (current[keyId] ?? 0) + 1
+    sessionKeyErrorsRef.current = current
+    setSessionKeyErrors({ ...current })
+  }, [])
 
   const resetTest = useCallback(() => {
     const { text, snippet: s } = buildInitialText()
@@ -74,13 +99,16 @@ export function useTypingTest(timerMode: TimerMode) {
     setTestState('idle')
     setResult(null)
     setIsNewRecord(false)
-    setBestWpm(loadProgress().bestWpm[timerMode])
+    setNewBadges([])
+    setSessionKeyErrors({})
+    setBestWpm(getBestWpm(timerMode))
     startTimeRef.current = null
     lastGoalRef.current = s.goal
     charsRef.current = initCharStates(text)
     cursorRef.current = 0
     testStateRef.current = 'idle'
     errorsRef.current = 0
+    sessionKeyErrorsRef.current = {}
   }, [timerMode])
 
   const finishTest = useCallback(() => {
@@ -106,16 +134,26 @@ export function useTypingTest(timerMode: TimerMode) {
       typedChars,
     }
 
-    const { record, isNewRecord: newRec } = updateProgressAfterSession(
+    const { isNewRecord: newRec, newBadges: badges } = saveSession({
+      ...session,
       timerMode,
-      wpm,
-    )
-    setBestWpm(record.bestWpm[timerMode])
+      sessionKeyErrors: { ...sessionKeyErrorsRef.current },
+    })
+
+    setBestWpm(getBestWpm(timerMode))
     setIsNewRecord(newRec)
+    setNewBadges(badges)
     setResult(session)
     setTestState('finished')
     testStateRef.current = 'finished'
-  }, [timerMode])
+
+    playSound('complete', soundsEnabledRef.current)
+    if (badges.length > 0) {
+      setTimeout(() => playSound('badge', soundsEnabledRef.current), 300)
+    }
+
+    onSessionSaved?.()
+  }, [timerMode, onSessionSaved])
 
   useEffect(() => {
     if (testState !== 'active') return
@@ -165,7 +203,7 @@ export function useTypingTest(timerMode: TimerMode) {
   }, [])
 
   const typeChar = useCallback(
-    (inputChar: string) => {
+    (inputChar: string, physicalKey: string) => {
       if (testStateRef.current === 'finished') return
       startIfNeeded()
 
@@ -182,13 +220,16 @@ export function useTypingTest(timerMode: TimerMode) {
         const next = [...current]
         if (inputChar === expected) {
           next[index] = { ...next[index]!, status: 'correct' }
+          playSound('key', soundsEnabledRef.current)
         } else {
           next[index] = { ...next[index]!, status: 'incorrect' }
+          recordKeyError(inputChar, physicalKey)
           setErrors((e) => {
             const updated = e + 1
             errorsRef.current = updated
             return updated
           })
+          playSound('error', soundsEnabledRef.current)
         }
 
         const newIndex = index + 1
@@ -204,7 +245,7 @@ export function useTypingTest(timerMode: TimerMode) {
         return next
       })
     },
-    [extendTextIfNeeded, startIfNeeded],
+    [extendTextIfNeeded, startIfNeeded, recordKeyError],
   )
 
   const handleKeyDown = useCallback(
@@ -249,7 +290,7 @@ export function useTypingTest(timerMode: TimerMode) {
 
       if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault()
-        typeChar(e.key)
+        typeChar(e.key, e.code || e.key)
       }
     },
     [timerMode, finishTest, typeChar],
@@ -278,6 +319,8 @@ export function useTypingTest(timerMode: TimerMode) {
     result,
     isNewRecord,
     bestWpm,
+    newBadges,
+    sessionKeyErrors,
     inputRef,
     resetTest,
     finishTest,

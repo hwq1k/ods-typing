@@ -72,7 +72,10 @@ export function TypingArea({
             }
 
             return (
-              <span key={index} className={className}>
+              <span
+                key={index}
+                className={`${className} transition-colors duration-150`}
+              >
                 {item.char}
               </span>
             )

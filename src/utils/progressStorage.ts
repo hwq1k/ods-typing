@@ -1,41 +1,38 @@
 import type { ProgressRecord, TimerMode } from '../types'
+import { getBestWpm, loadUserData, saveSession } from '../storage/userStore'
+import type { SessionSavePayload } from '../types/user'
 
-const STORAGE_KEY = 'ods-typing-progress'
-
-const DEFAULT_PROGRESS: ProgressRecord = {
-  bestWpm: { '15': 0, '30': 0, '60': 0, infinite: 0 },
-  sessionsCompleted: 0,
-}
-
+/** @deprecated Usa userStore directamente */
 export function loadProgress(): ProgressRecord {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { ...DEFAULT_PROGRESS }
-    const parsed = JSON.parse(raw) as ProgressRecord
-    return {
-      bestWpm: { ...DEFAULT_PROGRESS.bestWpm, ...parsed.bestWpm },
-      sessionsCompleted: parsed.sessionsCompleted ?? 0,
-    }
-  } catch {
-    return { ...DEFAULT_PROGRESS }
+  const { progress } = loadUserData()
+  return {
+    bestWpm: progress.bestWpm,
+    sessionsCompleted: progress.sessionsCompleted,
   }
-}
-
-export function saveProgress(record: ProgressRecord): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(record))
 }
 
 export function updateProgressAfterSession(
   mode: TimerMode,
   wpm: number,
 ): { record: ProgressRecord; isNewRecord: boolean } {
-  const record = loadProgress()
-  const previousBest = record.bestWpm[mode]
-  const isNewRecord = wpm > previousBest
-  if (isNewRecord) {
-    record.bestWpm[mode] = wpm
+  const { data, isNewRecord } = saveSession({
+    timerMode: mode,
+    wpm,
+    accuracy: 0,
+    timeSeconds: 0,
+    errors: 0,
+    correctChars: 0,
+    typedChars: 0,
+    sessionKeyErrors: {},
+  })
+  return {
+    record: {
+      bestWpm: data.progress.bestWpm,
+      sessionsCompleted: data.progress.sessionsCompleted,
+    },
+    isNewRecord,
   }
-  record.sessionsCompleted += 1
-  saveProgress(record)
-  return { record, isNewRecord }
 }
+
+export { saveSession, getBestWpm }
+export type { SessionSavePayload }

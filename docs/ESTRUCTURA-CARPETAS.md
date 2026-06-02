@@ -10,23 +10,36 @@ ods-typing/
 │   └── favicon.svg
 ├── src/
 │   ├── components/
-│   │   ├── Header.tsx         # Cabecera + toggle tema
-│   │   ├── ThemeToggle.tsx    # Botón claro/oscuro
-│   │   ├── TimerSelector.tsx  # 15s | 30s | 60s | ∞
-│   │   ├── StatsBar.tsx       # Métricas en vivo
-│   │   ├── TypingArea.tsx     # Texto + input oculto
-│   │   └── ResultsPanel.tsx   # Modal de resultados
+│   │   ├── Header.tsx         # Cabecera + navegación
+│   │   ├── Modal.tsx          # Contenedor modal reutilizable
+│   │   ├── ProfilePanel.tsx   # Perfil local editable
+│   │   ├── StatsHistoryPanel.tsx # Historial y estadísticas
+│   │   ├── KeyHeatmap.tsx     # Heatmap de teclas erróneas
+│   │   ├── BadgesGrid.tsx     # Logros / badges
+│   │   ├── SettingsMenu.tsx   # Sonidos y PWA
+│   │   ├── ThemeToggle.tsx
+│   │   ├── TimerSelector.tsx
+│   │   ├── StatsBar.tsx
+│   │   ├── TypingArea.tsx
+│   │   └── ResultsPanel.tsx
 │   ├── data/
-│   │   └── odsTexts.ts        # Fragmentos por ODS (1-17)
+│   │   ├── odsTexts.ts
+│   │   ├── badges.ts          # Definición de logros
+│   │   └── keyboardLayout.ts  # Layout QWERTY para heatmap
 │   ├── hooks/
-│   │   ├── useTheme.ts        # Tema + localStorage
-│   │   └── useTypingTest.ts   # Lógica del test
+│   │   ├── useTheme.ts
+│   │   ├── useUserData.ts     # Perfil y settings
+│   │   └── useTypingTest.ts
+│   ├── storage/
+│   │   └── userStore.ts       # Persistencia unificada
 │   ├── types/
-│   │   └── index.ts           # TimerMode, TestState, etc.
+│   │   ├── index.ts
+│   │   └── user.ts
 │   ├── utils/
-│   │   ├── typingMetrics.ts   # Cálculo WPM, accuracy
-│   │   ├── textGenerator.ts   # Texto aleatorio ODS
-│   │   └── progressStorage.ts # Récords locales
+│   │   ├── typingMetrics.ts
+│   │   ├── textGenerator.ts
+│   │   ├── sounds.ts          # Web Audio API
+│   │   └── progressStorage.ts # Compatibilidad legacy
 │   ├── App.tsx                # Layout principal
 │   ├── main.tsx               # Entry point
 │   └── index.css              # Tailwind + variables tema
