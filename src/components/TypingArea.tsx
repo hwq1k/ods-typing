@@ -12,6 +12,17 @@ interface TypingAreaProps {
   onFocusRequest: () => void
 }
 
+function statusClassName(status: CharState['status']): string {
+  switch (status) {
+    case 'correct':
+      return 'text-correct dark:text-correct-dark'
+    case 'incorrect':
+      return 'text-error underline decoration-error'
+    default:
+      return 'text-muted/50 dark:text-muted-dark/40'
+  }
+}
+
 export function TypingArea({
   chars,
   cursorIndex,
@@ -24,6 +35,8 @@ export function TypingArea({
   useEffect(() => {
     onFocusRequest()
   }, [onFocusRequest])
+
+  const isFinished = testState === 'finished'
 
   return (
     <section className="relative w-full px-4 sm:px-8" aria-label="Área de mecanografía">
@@ -48,35 +61,26 @@ export function TypingArea({
           className="absolute h-px w-px overflow-hidden opacity-0"
           aria-label="Entrada de mecanografía"
           onKeyDown={onKeyDown}
-          disabled={testState === 'finished'}
+          disabled={isFinished}
         />
 
         <p className="font-mono text-lg leading-relaxed sm:text-2xl md:text-3xl">
           {chars.map((item, index) => {
-            const isCurrent = index === cursorIndex && testState !== 'finished'
-            let className = 'text-muted/50 dark:text-muted-dark/40'
-
-            if (item.status === 'correct') {
-              className = 'text-correct dark:text-correct-dark'
-            } else if (item.status === 'incorrect') {
-              className = 'text-error underline decoration-error'
-            }
-
-            if (isCurrent) {
-              return (
-                <span key={index} className="relative">
-                  <span className="absolute bottom-0 left-0 h-[2px] w-full animate-pulse bg-caret" />
-                  <span className="text-text dark:text-caret">{item.char}</span>
-                </span>
-              )
-            }
+            const isCaret = index === cursorIndex && !isFinished
+            const colorClass = statusClassName(item.status)
 
             return (
               <span
                 key={index}
-                className={`${className} transition-colors duration-150`}
+                className={`relative inline-block transition-colors duration-150 ${colorClass}`}
               >
                 {item.char}
+                {isCaret && (
+                  <span
+                    className="absolute bottom-0 left-0 h-[2px] w-full animate-pulse bg-caret"
+                    aria-hidden
+                  />
+                )}
               </span>
             )
           })}

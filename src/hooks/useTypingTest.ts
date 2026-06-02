@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import type {
   CharState,
   LiveStats,
@@ -8,6 +8,12 @@ import type {
 } from '../types'
 import type { OdsSnippet } from '../data/odsTexts'
 import { charToKeyId } from '../data/keyboardLayout'
+import {
+  applyBackspace,
+  applyCharacter,
+  countCorrectChars,
+  type TypingEngineState,
+} from '../engine/typingEngine'
 import {
   appendRandomText,
   buildInitialText,
@@ -21,18 +27,36 @@ import {
 import { getBestWpm, saveSession } from '../storage/userStore'
 import { playSound } from '../utils/sounds'
 
-function countCorrect(chars: CharState[]): number {
-  return chars.filter((c) => c.status === 'correct').length
-}
-
 function createInitialState(timerMode: TimerMode) {
   const { text, snippet } = buildInitialText()
   return {
-    chars: initCharStates(text),
+    engine: {
+      chars: initCharStates(text),
+      cursorIndex: 0,
+      errors: 0,
+    },
     snippet,
     lastGoal: snippet.goal,
     countdown: getTimerSeconds(timerMode),
     bestWpm: getBestWpm(timerMode),
+  }
+}
+
+type EngineAction =
+  | { type: 'SYNC'; state: TypingEngineState }
+  | { type: 'RESET'; chars: CharState[] }
+
+function engineReducer(
+  state: TypingEngineState,
+  action: EngineAction,
+): TypingEngineState {
+  switch (action.type) {
+    case 'SYNC':
+      return action.state
+    case 'RESET':
+      return { chars: action.chars, cursorIndex: 0, errors: 0 }
+    default:
+      return state
   }
 }
 
@@ -47,10 +71,10 @@ export function useTypingTest(
 ) {
   const initial = createInitialState(timerMode)
 
+  const [engine, dispatchEngine] = useReducer(engineReducer, initial.engine)
+  const { chars, cursorIndex, errors } = engine
+
   const [testState, setTestState] = useState<TestState>('idle')
-  const [chars, setChars] = useState<CharState[]>(initial.chars)
-  const [cursorIndex, setCursorIndex] = useState(0)
-  const [errors, setErrors] = useState(0)
   const [elapsedMs, setElapsedMs] = useState(0)
   const [countdown, setCountdown] = useState<number | null>(initial.countdown)
   const [snippet, setSnippet] = useState<OdsSnippet | null>(initial.snippet)
@@ -65,20 +89,14 @@ export function useTypingTest(
   const startTimeRef = useRef<number | null>(null)
   const lastGoalRef = useRef(initial.lastGoal)
   const inputRef = useRef<HTMLInputElement>(null)
-  const charsRef = useRef(chars)
-  const cursorRef = useRef(cursorIndex)
   const testStateRef = useRef(testState)
-  const errorsRef = useRef(errors)
   const sessionKeyErrorsRef = useRef<Record<string, number>>({})
   const soundsEnabledRef = useRef(soundsEnabled)
 
   useEffect(() => {
-    charsRef.current = chars
-    cursorRef.current = cursorIndex
     testStateRef.current = testState
-    errorsRef.current = errors
     soundsEnabledRef.current = soundsEnabled
-  }, [chars, cursorIndex, testState, errors, soundsEnabled])
+  }, [testState, soundsEnabled])
 
   const recordKeyError = useCallback((char: string, physicalKey: string) => {
     const keyId = charToKeyId(char, physicalKey)
@@ -88,11 +106,27 @@ export function useTypingTest(
     setSessionKeyErrors({ ...current })
   }, [])
 
+  const extendTextIfNeeded = useCallback(
+    (index: number, currentChars: CharState[]) => {
+      if (index < currentChars.length - 30) return currentChars
+      const { text, snippet: s } = appendRandomText(
+        currentChars.map((c) => c.char).join(''),
+        lastGoalRef.current,
+      )
+      lastGoalRef.current = s.goal
+      setSnippet(s)
+      const extra = text.slice(currentChars.length)
+      return [
+        ...currentChars,
+        ...extra.split('').map((char) => ({ char, status: 'pending' as const })),
+      ]
+    },
+    [],
+  )
+
   const resetTest = useCallback(() => {
     const { text, snippet: s } = buildInitialText()
-    setChars(initCharStates(text))
-    setCursorIndex(0)
-    setErrors(0)
+    dispatchEngine({ type: 'RESET', chars: initCharStates(text) })
     setElapsedMs(0)
     setCountdown(getTimerSeconds(timerMode))
     setSnippet(s)
@@ -104,18 +138,13 @@ export function useTypingTest(
     setBestWpm(getBestWpm(timerMode))
     startTimeRef.current = null
     lastGoalRef.current = s.goal
-    charsRef.current = initCharStates(text)
-    cursorRef.current = 0
     testStateRef.current = 'idle'
-    errorsRef.current = 0
     sessionKeyErrorsRef.current = {}
   }, [timerMode])
 
   const finishTest = useCallback(() => {
-    const currentChars = charsRef.current
-    const index = cursorRef.current
-    const correctChars = countCorrect(currentChars)
-    const typedChars = index
+    const correctChars = countCorrectChars(chars)
+    const typedChars = cursorIndex
     const elapsed = startTimeRef.current
       ? Date.now() - startTimeRef.current
       : 0
@@ -123,13 +152,12 @@ export function useTypingTest(
     const wpm = calculateWpm(correctChars, elapsed || 1)
     const accuracy = calculateAccuracy(correctChars, typedChars)
     const timeSeconds = elapsed / 1000
-    const errorCount = errorsRef.current
 
     const session: SessionResult = {
       wpm,
       accuracy,
       timeSeconds,
-      errors: errorCount,
+      errors,
       correctChars,
       typedChars,
     }
@@ -153,7 +181,7 @@ export function useTypingTest(
     }
 
     onSessionSaved?.()
-  }, [timerMode, onSessionSaved])
+  }, [chars, cursorIndex, errors, timerMode, onSessionSaved])
 
   useEffect(() => {
     if (testState !== 'active') return
@@ -176,24 +204,6 @@ export function useTypingTest(
     return () => clearInterval(interval)
   }, [testState, timerMode, finishTest])
 
-  const extendTextIfNeeded = useCallback(
-    (index: number, currentChars: CharState[]) => {
-      if (index < currentChars.length - 30) return currentChars
-      const { text, snippet: s } = appendRandomText(
-        currentChars.map((c) => c.char).join(''),
-        lastGoalRef.current,
-      )
-      lastGoalRef.current = s.goal
-      setSnippet(s)
-      const extra = text.slice(currentChars.length)
-      return [
-        ...currentChars,
-        ...extra.split('').map((char) => ({ char, status: 'pending' as const })),
-      ]
-    },
-    [],
-  )
-
   const startIfNeeded = useCallback(() => {
     if (testStateRef.current === 'idle') {
       setTestState('active')
@@ -207,45 +217,35 @@ export function useTypingTest(
       if (testStateRef.current === 'finished') return
       startIfNeeded()
 
-      const index = cursorRef.current
-      setChars((prev) => {
-        let current = prev
-        if (index >= current.length) {
-          current = extendTextIfNeeded(index, current)
-        }
+      let workingChars = chars
+      if (cursorIndex >= workingChars.length) {
+        workingChars = extendTextIfNeeded(cursorIndex, workingChars)
+      }
 
-        const expected = current[index]?.char
-        if (expected === undefined) return current
+      const result = applyCharacter(
+        { chars: workingChars, cursorIndex, errors },
+        inputChar,
+      )
+      if (!result) return
 
-        const next = [...current]
-        if (inputChar === expected) {
-          next[index] = { ...next[index]!, status: 'correct' }
-          playSound('key', soundsEnabledRef.current)
-        } else {
-          next[index] = { ...next[index]!, status: 'incorrect' }
-          recordKeyError(inputChar, physicalKey)
-          setErrors((e) => {
-            const updated = e + 1
-            errorsRef.current = updated
-            return updated
-          })
-          playSound('error', soundsEnabledRef.current)
-        }
+      let nextChars = result.state.chars
+      if (result.state.cursorIndex >= nextChars.length - 20) {
+        nextChars = extendTextIfNeeded(result.state.cursorIndex, nextChars)
+      }
 
-        const newIndex = index + 1
-        setCursorIndex(newIndex)
-        cursorRef.current = newIndex
-        charsRef.current = next
+      if (result.isCorrect) {
+        playSound('key', soundsEnabledRef.current)
+      } else {
+        recordKeyError(inputChar, physicalKey)
+        playSound('error', soundsEnabledRef.current)
+      }
 
-        if (newIndex >= next.length - 20) {
-          const extended = extendTextIfNeeded(newIndex, next)
-          charsRef.current = extended
-          return extended
-        }
-        return next
+      dispatchEngine({
+        type: 'SYNC',
+        state: { ...result.state, chars: nextChars },
       })
     },
-    [extendTextIfNeeded, startIfNeeded, recordKeyError],
+    [chars, cursorIndex, errors, extendTextIfNeeded, startIfNeeded, recordKeyError],
   )
 
   const handleKeyDown = useCallback(
@@ -264,27 +264,13 @@ export function useTypingTest(
 
       if (e.key === 'Backspace') {
         e.preventDefault()
-        if (cursorRef.current === 0) return
+        if (cursorIndex === 0) return
         if (testStateRef.current === 'idle') return
 
-        setChars((prev) => {
-          const next = [...prev]
-          const idx = cursorRef.current - 1
-          const prevStatus = next[idx]?.status
-          next[idx] = { ...next[idx]!, status: 'pending' }
-          if (prevStatus === 'incorrect') {
-            setErrors((err) => {
-              const updated = Math.max(0, err - 1)
-              errorsRef.current = updated
-              return updated
-            })
-          }
-          charsRef.current = next
-          return next
+        dispatchEngine({
+          type: 'SYNC',
+          state: applyBackspace({ chars, cursorIndex, errors }),
         })
-        const newIndex = cursorRef.current - 1
-        setCursorIndex(newIndex)
-        cursorRef.current = newIndex
         return
       }
 
@@ -293,12 +279,12 @@ export function useTypingTest(
         typeChar(e.key, e.code || e.key)
       }
     },
-    [timerMode, finishTest, typeChar],
+    [timerMode, finishTest, typeChar, chars, cursorIndex, errors],
   )
 
   const liveStats: LiveStats = {
-    wpm: calculateWpm(countCorrect(chars), elapsedMs || 0),
-    accuracy: calculateAccuracy(countCorrect(chars), cursorIndex),
+    wpm: calculateWpm(countCorrectChars(chars), elapsedMs || 0),
+    accuracy: calculateAccuracy(countCorrectChars(chars), cursorIndex),
     timeSeconds: elapsedMs / 1000,
     errors,
   }
