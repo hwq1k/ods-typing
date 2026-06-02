@@ -274,6 +274,12 @@ export function useTypingTest(
         return
       }
 
+      if (e.key === ' ' || e.code === 'Space') {
+        e.preventDefault()
+        typeChar(' ', 'Space')
+        return
+      }
+
       if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault()
         typeChar(e.key, e.code || e.key)

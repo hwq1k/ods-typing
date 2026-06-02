@@ -1,6 +1,11 @@
 import { useEffect } from 'react'
 import type { CharState, TestState } from '../types'
 import type { OdsSnippet } from '../data/odsTexts'
+import {
+  getCharAriaLabel,
+  getVisibleCharacter,
+  isSpaceChar,
+} from '../utils/charDisplay'
 
 interface TypingAreaProps {
   chars: CharState[]
@@ -64,17 +69,21 @@ export function TypingArea({
           disabled={isFinished}
         />
 
-        <p className="font-mono text-lg leading-relaxed sm:text-2xl md:text-3xl">
+        <p className="whitespace-pre-wrap font-mono text-lg leading-relaxed sm:text-2xl md:text-3xl">
           {chars.map((item, index) => {
             const isCaret = index === cursorIndex && !isFinished
             const colorClass = statusClassName(item.status)
+            const space = isSpaceChar(item.char)
 
             return (
               <span
                 key={index}
-                className={`relative inline-block transition-colors duration-150 ${colorClass}`}
+                aria-label={getCharAriaLabel(item.char)}
+                className={`relative inline-block transition-colors duration-150 ${colorClass} ${
+                  space ? 'min-w-[0.55em] text-center' : ''
+                }`}
               >
-                {item.char}
+                {getVisibleCharacter(item.char, item.status)}
                 {isCaret && (
                   <span
                     className="absolute bottom-0 left-0 h-[2px] w-full animate-pulse bg-caret"
